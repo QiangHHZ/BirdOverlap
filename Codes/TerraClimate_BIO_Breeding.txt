@@ -1,0 +1,262 @@
+// TerraClimate BIO variables: Breeding season
+// Data source: TerraClimate via Google Earth Engine
+
+// defining geographical region according to soil data that could not be computed using GEE 
+var region = ee.Geometry.Rectangle([-179.99999998333, -90, 179.99985601667, 90], 'EPSG:4326', false);
+
+// defining study period for extracting explanatory variables
+var startDate = ee.Date('2002-01-01');  
+var endDate = ee.Date('2020-12-31'); 
+
+var IC = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                          .filter(ee.Filter.calendarRange(2002,2020,'year'))
+                          .filter(ee.Filter.calendarRange(5,8,'month'));
+// print(IC, 'IC');
+
+// Monthly maximum temperature (°C)
+var tmmx_monthly = IC.filterDate(startDate,endDate.advance(1,'day')).select(['tmmx']); 
+// Monthly minimum temperature (°C)
+var tmmn_monthly = IC.filterDate(startDate,endDate.advance(1,'day')).select(['tmmn']); 
+
+var tmmx = tmmx_monthly.map(function(img) {
+  return img.multiply(0.1) // Celsius
+            .set('system:time_start',img.get('system:time_start'));
+});
+
+var tmmn = tmmn_monthly.map(function(img) {
+  return img.multiply(0.1)  //  Celsius
+            .set('system:time_start',img.get('system:time_start'));
+});
+
+// print('tmmx', tmmx);
+// print('tmmn', tmmn);
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////// BIO-1 Annual Mean Temperature //////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// annual mean of monthly mean temperature (AMtmean)
+var tmmx_tmmn_sum = tmmx.sum().toDouble().add(tmmn.sum().toDouble());
+var AMtmean = tmmx_tmmn_sum.multiply(1/152).toDouble();   // 152=4*19*2; 4 months, 19years, 2：denominator
+// Map.addLayer(AMtmean, {},"AMtmean");
+
+//exporting AMtmean
+Export.image.toDrive({image: AMtmean.unmask(-9999),
+                      description: 'Temp_Seasonal_Breeding_Mean',
+                      region: region,
+                      crs: 'EPSG:4326',
+                      crsTransform:  [0.0833333, 0, -179.99999998333, 0, -0.0833333, 83.416610916667],
+                      scale: 25000, 
+                      fileFormat: 'GeoTIFF',
+                      maxPixels: 1e13,
+                      folder: 'Bird_Distribution'
+                      });
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////// BIO-4 Temperature Seasonality //////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+var tmmx_tmmn_monthly = IC.filterDate(startDate,endDate.advance(1,'day')).select(['tmmx','tmmn']); 
+// print(tmmx_tmmn_monthly,'tmmx_tmmn_monthly');
+
+var tm_monthly = tmmx_tmmn_monthly.map(function(img) {
+  return img.multiply(0.1) // Celsius
+            .set('system:time_start',img.get('system:time_start'));
+});
+// print(tm_monthly,'tm_monthly');
+
+
+//---------------------------------------------------------------------------------
+var addMeanTemperature = function(image) {
+  var meanTemp = image.select('tmmx').add(image.select('tmmn')).multiply(0.5).rename('tmean');
+    return image.addBands(meanTemp);
+};
+
+var tm_monthly_mean = tm_monthly.map(addMeanTemperature).select('tmean');
+// print(tm_monthly_mean,'tm_monthly_mean');
+
+//---------------------------------------------------------------------------------
+var addDateInfo = function(image) {
+  var date = ee.Date(image.get('system:time_start'));
+  return image.set({
+    'year': date.get('year'),
+    'month': date.get('month')
+  });
+};
+
+var tm_monthly_with_date = tm_monthly_mean.map(addDateInfo);
+// print(tm_monthly_with_date,'tm_monthly_with_date');
+
+var months = ee.List.sequence(5, 8);
+var monthlyMeanCollection = months.map(function(month) {
+  var monthlyImages = tm_monthly_with_date.filter(ee.Filter.eq('month', month));
+  var meanImage = monthlyImages.mean().set('month', month);
+  return meanImage.rename('tmean');
+});
+
+var tm_monthly_multimean = ee.ImageCollection.fromImages(monthlyMeanCollection);
+// print(tm_monthly_multimean, 'tm_monthly_multimean');
+
+//---------------------------------------------------------------------------------
+var tm_monthly_StdDev = tm_monthly_multimean.reduce(ee.Reducer.stdDev());
+// print(tm_monthly_StdDev,'tm_monthly_StdDev');
+// Map.addLayer(tm_monthly_StdDev, {},"tm_monthly_StdDev");
+
+var tm_seasonality = tm_monthly_StdDev.multiply(100).toDouble();
+// print(tm_seasonality,'tm_seasonality');
+// Map.addLayer(tm_seasonality, {},"tm_seasonality");
+
+//---------------------------------------------------------------------------------
+//exporting AMtmean
+Export.image.toDrive({image: tm_seasonality.unmask(-9999),
+                      description: 'Temp_Seasonal_Breeding_Seasonality',
+                      region: region,
+                      crs: 'EPSG:4326',
+                      crsTransform:  [0.0833333, 0, -179.99999998333, 0, -0.0833333, 83.416610916667],
+                      scale: 25000, 
+                      fileFormat: 'GeoTIFF',
+                      maxPixels: 1e13,
+                      folder: 'Bird_Distribution'
+                      });
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////// BIO-12 Annual Precipitation ////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Monthly precipitation accumulation (mm)
+var rainfall_monthly = IC.filterDate(startDate,endDate.advance(1,'day')).select(['pr']); 
+// print('rainfall_monthly', rainfall_monthly);
+// print('rainfall_monthly projection',rainfall_monthly_2020.first().projection());
+
+// annual precipitation (AP)
+var AP  = rainfall_monthly.sum().toInt16();
+// print('AP', AP);
+// Map.addLayer(AP, {},"AP")
+
+var AP_mean  = AP.divide(10).toInt16();
+// print('AP_mean', AP_mean);
+// Map.addLayer(AP_mean, {},"AP_mean")
+
+// exporting AP 
+Export.image.toDrive({image: AP_mean.unmask(-9999),
+                      description: 'Pre_Seasonal_Breeding_Mean',
+                      region: region,
+                      crs: 'EPSG:4326',
+                      crsTransform:  [0.0833333, 0, -179.99999998333, 0, -0.0833333, 83.416610916667],
+                      scale: 25000, 
+                      fileFormat: 'GeoTIFF',
+                      maxPixels: 1e13,
+                      folder: 'Bird_Distribution'
+                      });
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////// BIO-15 Precipitation Seasonality ///////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// pre seasonality
+var rainfall_monthly = IC.filterDate(startDate,endDate.advance(1,'day')).select(['pr']); 
+// print('rainfall_monthly', rainfall_monthly);
+
+//---------------------------------------------------------------------------------Std
+var addDateInfo = function(image) {
+  var date = ee.Date(image.get('system:time_start'));
+  return image.set({
+    'year': date.get('year'),
+    'month': date.get('month')
+  });
+};
+var rainfall_with_date = rainfall_monthly.map(addDateInfo);
+// print(rainfall_with_date, 'rainfall_with_date');
+
+var months = ee.List.sequence(5, 8);
+
+var monthlyMeanCollection = months.map(function(month) {
+  var monthlyImages = rainfall_with_date.filter(ee.Filter.eq('month', month));
+  var meanImage = monthlyImages.mean().set('month', month);
+  return meanImage.rename('monthly_mean');
+});
+
+var monthlyMeanRainfall = ee.ImageCollection.fromImages(monthlyMeanCollection);
+// print(monthlyMeanRainfall, 'Monthly Mean Rainfall');
+
+var monthlyStdDev = monthlyMeanRainfall.reduce(ee.Reducer.stdDev());
+// print(monthlyStdDev, 'Monthly StdDev');
+// Map.addLayer(monthlyStdDev, {}, 'Monthly StdDev');
+
+//---------------------------------------------------------------------------------Mean
+var monthlyMean = monthlyMeanRainfall.reduce(ee.Reducer.mean());
+// print(monthlyMean, 'monthlyMean');
+// Map.addLayer(monthlyMean, {}, 'monthlyMean');
+
+//---------------------------------------------------------------------------------CV
+var pr_seasonality_cv = monthlyStdDev.divide(monthlyMean);
+// var pr_seasonality_cv = tenYearStdDevMean.divide(AP_month);
+// var pr_seasonality_cv = tenYearStdDevMean.divide(AP_mean);
+// print(pr_seasonality_cv,'pr_seasonality_cv');
+// Map.addLayer(pr_seasonality_cv, {},"pr_seasonality_cv");
+
+
+//---------------------------------------------------------------------------------CV * 100
+var pr_seasonality = pr_seasonality_cv.multiply(100).toDouble();
+// print(pr_seasonality,'pr_seasonality');
+// Map.addLayer(pr_seasonality, {},"pr_seasonality");
+
+//exporting AMtmean
+Export.image.toDrive({image: pr_seasonality.unmask(-9999),
+                      description: 'Pre_Seasonal_Breeding_Seasonality',
+                      region: region,
+                      crs: 'EPSG:4326',
+                      crsTransform:  [0.0833333, 0, -179.99999998333, 0, -0.0833333, 83.416610916667],
+                      scale: 25000, 
+                      fileFormat: 'GeoTIFF',
+                      maxPixels: 1e13,
+                      folder: 'Bird_Distribution'
+                      });
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////// BIO-17 Precipitation of Driest Quarter /////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// BIO-17 Precipitation of Driest Quarter
+var calculateQuarterlyPrecipitation = function(year) {
+  var yearlyCollection = rainfall_monthly
+    .filter(ee.Filter.calendarRange(year, year, 'year'))
+    .filter(ee.Filter.calendarRange(5, 8, 'month')); // 
+  
+  var quarterlyCollections = ee.List.sequence(0, 1).map(function(q) {
+    q = ee.Number(q);  // 
+    var startMonth = q.multiply(2).add(5); // 
+    var endMonth = startMonth.add(1); // 
+    
+    var quarterImages = yearlyCollection.filter(ee.Filter.calendarRange(startMonth, endMonth, 'month'));
+    var quarterSum = quarterImages.sum().set('quarter', q.add(1)); // 
+    
+    return quarterSum;
+  });
+  
+  var quarterlyCollection = ee.ImageCollection.fromImages(quarterlyCollections);
+  
+  var driestQuarter = quarterlyCollection.reduce(ee.Reducer.min());
+  
+  return driestQuarter.set('year', year);
+};
+
+var years = ee.List.sequence(2010, 2019);
+var driestQuarterCollection = ee.ImageCollection.fromImages(years.map(calculateQuarterlyPrecipitation));
+// print(driestQuarterCollection, 'driestQuarterCollection');
+
+var bio17 = driestQuarterCollection.select('pr_min').reduce(ee.Reducer.mean());
+// print('BIO17 - Precipitation of the Driest Quarter:', bio17);
+// Map.addLayer(bio17, {min: 0, max: 500, palette: ['blue', 'green', 'yellow', 'red']}, 'BIO17 - Precipitation of Driest Quarter');
+
+//exporting AMtmean
+Export.image.toDrive({image: bio17.unmask(-9999),
+                      description: 'Pre_Seasonal_Breeding_DriestQuarter',
+                      region: region,
+                      crs: 'EPSG:4326',
+                      crsTransform:  [0.0833333, 0, -179.99999998333, 0, -0.0833333, 83.416610916667],
+                      scale: 25000, 
+                      fileFormat: 'GeoTIFF',
+                      maxPixels: 1e13,
+                      folder: 'Bird_Distribution'
+                      });
